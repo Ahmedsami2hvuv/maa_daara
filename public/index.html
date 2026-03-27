@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>نظام جباية الماء</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-inner">
+      <span class="brand">منظومة جباية الماء</span>
+      <span class="brand-sub">إدارة - كتاب - محصلين</span>
+    </div>
+  </div>
+  <div class="container">
+    <h1>نظام جباية الماء</h1>
+
+    <section id="loginCard" class="card">
+      <h2>تسجيل الدخول</h2>
+      <div class="row">
+        <input id="code" placeholder="رمز الدخول" />
+        <input id="pin" type="password" placeholder="الرقم السري" />
+        <button id="loginBtn">دخول</button>
+      </div>
+      <p class="hint">مدير افتراضي: الرمز `ADMIN` والرقم السري `1234`</p>
+    </section>
+
+    <section id="appPanel" class="hidden">
+      <div class="card">
+        <div class="row between">
+          <h2 id="welcomeText"></h2>
+          <button id="logoutBtn" class="danger">خروج</button>
+        </div>
+        <div class="tabs">
+          <button data-tab="areasTab">المناطق</button>
+          <button data-tab="subsTab">الاشتراكات</button>
+          <button data-tab="recordsTab">السجل السنوي</button>
+          <button data-tab="usersTab" id="usersTabBtn">الكتاب والمحصلين</button>
+          <button data-tab="settingsTab" id="settingsTabBtn">الاعدادات</button>
+        </div>
+      </div>
+
+      <section id="areasTab" class="card tab">
+        <h3>المناطق</h3>
+        <div class="row">
+          <input id="areaName" placeholder="اسم المنطقة" />
+          <button id="addAreaBtn">إضافة منطقة</button>
+        </div>
+        <ul id="areasList"></ul>
+      </section>
+
+      <section id="subsTab" class="card tab hidden">
+        <h3>الاشتراكات</h3>
+        <div class="grid">
+          <select id="subArea"></select>
+          <input id="subNumber" placeholder="رقم المشترك" />
+          <input id="subOwner" placeholder="اسم المالك الحالي" />
+          <input id="subPhone" placeholder="رقم الهاتف (اختياري)" />
+          <select id="subMeter">
+            <option value="3">3 متر</option>
+            <option value="4">4 متر</option>
+          </select>
+          <input id="subPrevOwners" placeholder="الملاك السابقين (افصلهم بفاصلة)" />
+          <button id="addSubBtn">إضافة مشترك</button>
+        </div>
+        <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>المنطقة</th><th>رقم المشترك</th><th>المالك</th><th>الهاتف</th><th>المقياس</th><th>فتح سجل</th>
+            </tr>
+          </thead>
+          <tbody id="subsBody"></tbody>
+        </table>
+        </div>
+      </section>
+
+      <section id="recordsTab" class="card tab hidden">
+        <h3>السجل السنوي</h3>
+        <div class="row">
+          <select id="recordSub"></select>
+          <input id="recordYear" type="number" value="2026" />
+          <button id="initYearBtn">تهيئة 6 اشهر</button>
+          <button id="loadYearBtn">تحميل السجل</button>
+          <button id="printReceiptBtn">طباعة وصل PDF</button>
+        </div>
+        <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>من</th><th>إلى</th><th>الماء</th><th>التنظيف</th><th>الفائدة</th><th>المجموع</th><th>الديون</th><th>المجموع الكلي</th><th>المدفوع</th><th>رقم الوصل</th><th>تاريخ الوصل</th><th>حفظ</th>
+            </tr>
+          </thead>
+          <tbody id="recordsBody"></tbody>
+        </table>
+        </div>
+      </section>
+
+      <section id="usersTab" class="card tab hidden">
+        <h3>الموظفين (مدير فقط)</h3>
+        <div class="grid">
+          <input id="userName" placeholder="الاسم" />
+          <select id="userRole">
+            <option value="writer">كاتب</option>
+            <option value="collector">محصل</option>
+          </select>
+          <input id="userCode" placeholder="رمز الدخول" />
+          <input id="userPin" placeholder="الرقم السري" />
+          <button id="addUserBtn">إنشاء حساب</button>
+        </div>
+        <h4>ربط اشتراك مع كاتب/محصل</h4>
+        <div class="grid">
+          <select id="assignSub"></select>
+          <select id="assignUser"></select>
+          <select id="assignType">
+            <option value="writer">كاتب</option>
+            <option value="collector">محصل</option>
+          </select>
+          <button id="assignBtn">ربط</button>
+        </div>
+        <ul id="usersList"></ul>
+      </section>
+
+      <section id="settingsTab" class="card tab hidden">
+        <h3>الاعدادات (مدير فقط)</h3>
+        <div class="grid">
+          <input id="price3" type="number" placeholder="سعر 3 متر" />
+          <input id="price4" type="number" placeholder="سعر 4 متر" />
+          <input id="cleanFee" type="number" placeholder="بدل التنظيف" />
+          <input id="interestRate" type="number" step="0.001" placeholder="نسبة الفائدة الشهرية" />
+          <button id="saveSettingsBtn">حفظ الاعدادات</button>
+          <button id="downloadBackupBtn" class="neutral">تحميل نسخة احتياطية</button>
+          <label class="upload-label">
+            استرجاع نسخة
+            <input id="restoreFile" type="file" accept="application/json" />
+          </label>
+        </div>
+      </section>
+    </section>
+  </div>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,152 @@
+body {
+  margin: 0;
+  font-family: "Cairo", Tahoma, Arial, sans-serif;
+  background: linear-gradient(180deg, #f3f6fb 0%, #e9eef8 100%);
+  color: #1f2937;
+}
+.topbar {
+  background: #0f4c81;
+  color: #fff;
+  padding: 12px 0;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.15);
+}
+.topbar-inner {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.brand {
+  font-weight: 700;
+}
+.brand-sub {
+  opacity: 0.9;
+  font-size: 13px;
+}
+.container {
+  max-width: 1200px;
+  margin: 20px auto;
+  padding: 0 12px;
+}
+.card {
+  background: #fff;
+  border-radius: 12px;
+  padding: 14px;
+  margin-bottom: 12px;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.08);
+}
+.row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.between {
+  justify-content: space-between;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+}
+input, select, button {
+  padding: 10px;
+  border: 1px solid #cfd5e2;
+  border-radius: 8px;
+  background: #fff;
+  font-family: inherit;
+}
+button {
+  background: #0c7ed5;
+  color: #fff;
+  border: none;
+  cursor: pointer;
+  transition: 0.2s ease;
+}
+button:hover {
+  opacity: 0.92;
+}
+button.danger {
+  background: #c0392b;
+}
+.neutral {
+  background: #475569;
+}
+.tabs {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.tabs button {
+  background: #34495e;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 10px;
+  background: #fff;
+  min-width: 920px;
+}
+th, td {
+  border: 1px solid #ddd;
+  padding: 6px;
+  text-align: center;
+}
+th {
+  background: #f7f7f7;
+}
+.hidden {
+  display: none;
+}
+.hint {
+  color: #666;
+}
+.table-wrap {
+  overflow-x: auto;
+}
+.upload-label {
+  background: #334155;
+  color: #fff;
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+}
+.upload-label input {
+  display: none;
+}
+
+@media (max-width: 768px) {
+  .topbar-inner {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+  .container {
+    margin: 12px auto;
+    padding: 0 8px;
+  }
+  .card {
+    padding: 10px;
+    border-radius: 10px;
+  }
+  .tabs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+  input, select, button {
+    width: 100%;
+    box-sizing: border-box;
+  }
+  .row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  h1 {
+    font-size: 20px;
+  }
+}

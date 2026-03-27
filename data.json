@@ -1,0 +1,30 @@
+{
+  "ids": {
+    "user": 2,
+    "area": 1,
+    "subscriber": 1,
+    "record": 1,
+    "previousOwner": 1,
+    "assignment": 1
+  },
+  "settings": {
+    "price_3m": 21600,
+    "price_4m": 30000,
+    "cleaning_fee": 3000,
+    "monthly_interest": 0.01
+  },
+  "users": [
+    {
+      "id": 1,
+      "name": "Ø§Ù„Ù…Ø¯ÙŠØ± Ø§Ù„Ø¹Ø§Ù…",
+      "role": "manager",
+      "code": "ADMIN",
+      "pin": "1234"
+    }
+  ],
+  "areas": [],
+  "subscribers": [],
+  "previousOwners": [],
+  "assignments": [],
+  "records": []
+}
