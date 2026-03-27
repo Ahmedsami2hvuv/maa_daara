@@ -499,7 +499,6 @@ async function runGlobalSearch() {
         const yr = btn.getAttribute("data-year");
         if (t === "subscriber") {
           pickSubscriber(Number(btn.getAttribute("data-id")));
-          showTab("subsTab");
         } else if (t === "area") {
           showTab("areasTab");
         } else if (t === "user") {
