@@ -12,10 +12,13 @@
 <body>
   <div class="topbar">
     <div class="topbar-inner">
-      <span class="brand">منظومة جباية الماء</span>
-      <span class="brand-sub">إدارة - كتاب - محصلين</span>
+      <div class="topbar-brand-row">
+        <button type="button" id="appBackBtn" class="btn-back hidden" title="رجوع للشاشة السابقة">رجوع</button>
+        <span class="brand">منظومة جباية الماء</span>
+        <span class="brand-sub">إدارة - كتاب - محصلين</span>
+      </div>
       <div id="globalSearchWrap" class="global-search hidden">
-        <input type="search" id="globalSearch" placeholder="بحث شامل: مناطق، مشتركين، موظفين، أرقام وصول..." autocomplete="off" />
+        <input type="search" id="globalSearch" placeholder="بحث: يمكن كتابة كلمات منفصلة (مثل: احمد حسين يجد احمد علي حسين)..." autocomplete="off" />
         <div id="searchResults" class="search-results hidden"></div>
       </div>
     </div>
@@ -42,7 +45,8 @@
           <button data-tab="areasTab">المناطق</button>
           <button data-tab="subsTab">الاشتراكات</button>
           <button data-tab="recordsTab">السجل السنوي</button>
-          <button data-tab="usersTab" id="usersTabBtn">الكوادر</button>
+          <button data-tab="writersTab" id="writersTabBtn">الكتاب</button>
+          <button data-tab="collectorsTab" id="collectorsTabBtn">المحصلين</button>
           <button data-tab="settingsTab" id="settingsTabBtn">الاعدادات</button>
         </div>
       </div>
@@ -92,10 +96,15 @@
           <input id="subPrevOwners" placeholder="الملاك السابقين (افصلهم بفاصلة)" />
           <button id="addSubBtn">إضافة مشترك</button>
         </div>
+        <div id="subsBulkBar" class="row subs-bulk-bar hidden">
+          <button type="button" id="subsBulkDeleteBtn" class="danger">حذف المحدد</button>
+          <span id="subsBulkHint" class="hint"></span>
+        </div>
         <div class="table-wrap">
-        <table>
+        <table class="subs-table">
           <thead>
             <tr>
+              <th class="sub-chk-col"><input type="checkbox" id="subsSelectAll" title="تحديد الكل الظاهر" /></th>
               <th>المنطقة</th><th>رقم المشترك</th><th>المالك</th><th>نوع المشترك</th><th>الهاتف</th><th>نظام الجباية</th><th>فتح سجل</th>
             </tr>
           </thead>
@@ -129,6 +138,7 @@
       <section id="recordsTab" class="card tab hidden">
         <h3>السجل السنوي</h3>
         <div class="row">
+          <button type="button" id="recordsBackBtn" class="neutral">رجوع للاشتراكات</button>
           <select id="recordSub"></select>
           <input id="recordYear" type="number" value="2026" />
           <button id="initYearBtn">تهيئة 6 اشهر</button>
@@ -147,66 +157,80 @@
         </div>
       </section>
 
-      <section id="usersTab" class="card tab hidden">
-        <h3>الموظفين (مدير فقط)</h3>
+      <section id="writersTab" class="card tab hidden">
+        <h3>الكتاب (مدير فقط)</h3>
         <div class="grid">
-          <input id="userName" placeholder="الاسم" />
-          <select id="userRole">
-            <option value="writer">كاتب</option>
-            <option value="collector">محصل</option>
-          </select>
-          <input id="userCode" placeholder="رمز الدخول" />
-          <input id="userPin" placeholder="الرقم السري" />
-          <button id="addUserBtn">إنشاء حساب</button>
+          <input id="writerUserName" placeholder="اسم الكاتب" />
+          <input id="writerUserCode" placeholder="رمز الدخول" />
+          <input id="writerUserPin" placeholder="الرقم السري" />
+          <button id="addWriterBtn" type="button">إنشاء حساب كاتب</button>
         </div>
-        <h4>الكتاب</h4>
+        <h4>قائمة الكتاب</h4>
         <ul id="writersList"></ul>
-        <h4>المحصلين</h4>
-        <ul id="collectorsList"></ul>
 
         <h4>ربط اشتراك مع كاتب</h4>
         <div class="grid">
           <select id="assignSubWriter"></select>
           <select id="assignWriter"></select>
-          <button id="assignWriterBtn">ربط كاتب</button>
+          <button id="assignWriterBtn" type="button">ربط كاتب</button>
         </div>
+
+        <h4>إسناد جماعي (كتاب)</h4>
+        <div class="row">
+          <button id="bulkAssignWritersBtn" type="button">تنفيذ الإسناد للكتاب</button>
+        </div>
+        <p class="hint">حدد كاتباً أو أكثر، ثم مناطق أو مشتركين، ثم نفّذ الإسناد.</p>
+        <div id="bulkUsersListWriters" class="checklist"></div>
+        <div class="row">
+          <strong>تحديد المناطق:</strong>
+          <button id="selectAllAreasBtnWriters" class="neutral" type="button">تحديد كل المناطق</button>
+          <button id="clearAreasBtnWriters" class="neutral" type="button">إلغاء تحديد المناطق</button>
+        </div>
+        <div id="bulkAreasListWriters" class="checklist"></div>
+        <div class="row">
+          <strong>تحديد المشتركين:</strong>
+          <button id="selectAllSubsBtnWriters" class="neutral" type="button">تحديد كل المشتركين</button>
+          <button id="clearSubsBtnWriters" class="neutral" type="button">إلغاء تحديد المشتركين</button>
+        </div>
+        <div id="bulkSubsListWriters" class="checklist"></div>
+      </section>
+
+      <section id="collectorsTab" class="card tab hidden">
+        <h3>المحصلين (مدير فقط)</h3>
+        <div class="grid">
+          <input id="collectorUserName" placeholder="اسم المحصل" />
+          <input id="collectorUserCode" placeholder="رمز الدخول" />
+          <input id="collectorUserPin" placeholder="الرقم السري" />
+          <button id="addCollectorBtn" type="button">إنشاء حساب محصل</button>
+        </div>
+        <h4>قائمة المحصلين</h4>
+        <ul id="collectorsList"></ul>
+
         <h4>ربط اشتراك مع محصل</h4>
         <div class="grid">
           <select id="assignSubCollector"></select>
           <select id="assignCollector"></select>
-          <button id="assignCollectorBtn">ربط محصل</button>
+          <button id="assignCollectorBtn" type="button">ربط محصل</button>
         </div>
-        <h4>إسناد جماعي حسب التحديد</h4>
-        <div class="grid">
-          <select id="bulkRole">
-            <option value="writer">إسناد إلى كاتب</option>
-            <option value="collector">إسناد إلى محصل</option>
-          </select>
-          <button id="bulkAssignBtn">تنفيذ الإسناد</button>
+
+        <h4>إسناد جماعي (محصلين)</h4>
+        <div class="row">
+          <button id="bulkAssignCollectorsBtn" type="button">تنفيذ الإسناد للمحصلين</button>
         </div>
-        <div id="bulkUsersList" class="checklist"></div>
+        <p class="hint">حدد محصلاً أو أكثر، ثم مناطق أو مشتركين، ثم نفّذ الإسناد.</p>
+        <div id="bulkUsersListCollectors" class="checklist"></div>
         <div class="row">
           <strong>تحديد المناطق:</strong>
-          <button id="selectAllAreasBtn" class="neutral" type="button">تحديد كل المناطق</button>
-          <button id="clearAreasBtn" class="neutral" type="button">إلغاء تحديد المناطق</button>
+          <button id="selectAllAreasBtnCollectors" class="neutral" type="button">تحديد كل المناطق</button>
+          <button id="clearAreasBtnCollectors" class="neutral" type="button">إلغاء تحديد المناطق</button>
         </div>
-        <div id="bulkAreasList" class="checklist"></div>
+        <div id="bulkAreasListCollectors" class="checklist"></div>
         <div class="row">
           <strong>تحديد المشتركين:</strong>
-          <button id="selectAllSubsBtn" class="neutral" type="button">تحديد كل المشتركين</button>
-          <button id="clearSubsBtn" class="neutral" type="button">إلغاء تحديد المشتركين</button>
+          <button id="selectAllSubsBtnCollectors" class="neutral" type="button">تحديد كل المشتركين</button>
+          <button id="clearSubsBtnCollectors" class="neutral" type="button">إلغاء تحديد المشتركين</button>
         </div>
-        <div id="bulkSubsList" class="checklist"></div>
-        <h4 class="hidden">ربط قديم</h4>
-        <div class="grid hidden">
-          <select id="assignSub"></select>
-          <select id="assignUser"></select>
-          <select id="assignType">
-            <option value="writer">كاتب</option>
-            <option value="collector">محصل</option>
-          </select>
-          <button id="assignBtn">ربط</button>
-        </div>
+        <div id="bulkSubsListCollectors" class="checklist"></div>
       </section>
 
       <section id="settingsTab" class="card tab hidden">

@@ -297,6 +297,26 @@ app.post("/api/subscribers", authRequired, allowRoles("manager", "writer"), (req
   res.json({ ok: true, id: sub.id });
 });
 
+app.post("/api/subscribers/bulk-delete", authRequired, allowRoles("manager", "writer"), (req, res) => {
+  const raw = req.body?.ids;
+  const ids = Array.isArray(raw) ? raw.map((x) => Number(x)).filter((x) => Number.isFinite(x) && x > 0) : [];
+  if (!ids.length) return res.status(400).json({ error: "لم يحدد أي مشترك للحذف" });
+  const unique = [...new Set(ids)];
+  let removed = 0;
+  for (const subscriberId of unique) {
+    if (!userCanAccessSubscriber(req.user, subscriberId)) continue;
+    const ix = db.subscribers.findIndex((s) => s.id === subscriberId);
+    if (ix === -1) continue;
+    db.subscribers.splice(ix, 1);
+    db.records = db.records.filter((r) => r.subscriber_id !== subscriberId);
+    db.previousOwners = db.previousOwners.filter((p) => p.subscriber_id !== subscriberId);
+    db.assignments = db.assignments.filter((a) => a.subscriber_id !== subscriberId);
+    removed += 1;
+  }
+  saveDB();
+  res.json({ ok: true, removed, requested: unique.length });
+});
+
 app.post("/api/subscribers/:id/assign", authRequired, allowRoles("manager"), (req, res) => {
   const subscriberId = Number(req.params.id);
   const { user_id, assignment_type } = req.body || {};
@@ -495,25 +515,118 @@ function resolveBillingPlan(rawValue, fallbackCode) {
   return fallbackCode;
 }
 
+function isSerialHeader(h) {
+  const s = cellStr(h).toLowerCase();
+  if (!s) return false;
+  if (/(تسلسل|رقم\s*التسلسل|serial|seq\.?|index|م\s*تسلسل)/i.test(s)) return true;
+  if (/^#+\s*$/.test(s)) return true;
+  if (/^م[\s\.]*$/.test(s) && s.length <= 4) return true;
+  return false;
+}
+
+function isExplicitSubscriptionHeader(h) {
+  const s = cellStr(h).toLowerCase();
+  return /(رقم\s*الاشتراك|رقم\s*المشترك|subscription)/i.test(s);
+}
+
 function classifyHeaderCell(h) {
   const s = cellStr(h).toLowerCase();
   if (!s) return null;
-  if (/(نوع.*(مشترك|اشتراك)|تصنيف|فئة|category|type)/i.test(s)) return "subscriber_type";
+  // نوع الاشتراك / نوع المشترك — قبل أي نمط فيه "اشتراك" حتى لا يُخلط مع رقم الاشتراك أو المنطقة
+  if (/(نوع\s*(الاشتراك|المشترك)|نوع\s*اشتراك|تصنيف|فئة|category|type)/i.test(s)) return "subscriber_type";
   if (/(مقياس|جباية|عداد|نظام|plan|meter|tariff)/i.test(s)) return "billing_plan";
   if (/(هاتف|جوال|phone|mobile|tel)/i.test(s)) return "phone";
-  if (/(رقم|number|no\b|subscriber|مشترك|اشتراك)/i.test(s) && !/هاتف|phone/.test(s)) return "subscriber_number";
-  if (/(اسم|name|مالك|owner)/i.test(s)) return "owner_name";
-  if (/(منطق|area|zone|حي|قطاع)/i.test(s)) return "area";
+  if (isSerialHeader(h)) return "serial";
+  if (isExplicitSubscriptionHeader(h)) return "subscriber_number";
+  // المنطقة قبل "اسم المشترك": لا تستخدم نمط "اسم" العام لأنه يطابق "اسم المنطقة" بالخطأ
+  if (
+    /(اسم\s*المنطقة|^المنطقة$|^منطقة$|المنطقة|منطق|area|zone|حي|قطاع)/i.test(s) &&
+    !/نوع/i.test(s)
+  ) {
+    return "area";
+  }
+  // اسم المشترك / المالك فقط — لا "اسم الكاتب" ولا "اسم المنطقة"
+  if (/(اسم\s*(المشترك|المالك)|مالك|owner|^(name|owner)\b)/i.test(s)) return "owner_name";
+  if ((/^اسم\s*$/i.test(s) || /^name\s*$/i.test(s)) && !/منطق|منطقة|نوع|كاتب/i.test(s)) return "owner_name";
+  // رقم اشتراك عام: لا صفوف فيها "نوع" (مثل نوع الاشتراك)
+  if (/(رقم|number|no\b|subscriber|مشترك|اشتراك)/i.test(s) && !/هاتف|phone|نوع/i.test(s)) return "subscriber_number";
   return null;
 }
 
 function mapHeaderRow(headerCells) {
   const map = { subscriber_number: -1, owner_name: -1, area: -1, phone: -1, subscriber_type: -1, billing_plan: -1 };
-  headerCells.forEach((cell, idx) => {
-    const k = classifyHeaderCell(cell);
-    if (k && map[k] === -1) map[k] = idx;
-  });
+  const n = headerCells.length;
+  const classified = headerCells.map((c) => classifyHeaderCell(c));
+
+  let idx = headerCells.findIndex((c) => isExplicitSubscriptionHeader(c));
+  if (idx >= 0) map.subscriber_number = idx;
+
+  idx = headerCells.findIndex((c) => /نوع\s*(الاشتراك|المشترك)/i.test(cellStr(c)));
+  if (idx >= 0) map.subscriber_type = idx;
+  else {
+    idx = classified.findIndex((k) => k === "subscriber_type");
+    if (idx >= 0) map.subscriber_type = idx;
+  }
+
+  idx = classified.findIndex((k) => k === "billing_plan");
+  if (idx >= 0) map.billing_plan = idx;
+
+  idx = classified.findIndex((k) => k === "phone");
+  if (idx >= 0) map.phone = idx;
+
+  idx = headerCells.findIndex((c) => /اسم\s*(المشترك|المالك)/i.test(cellStr(c)));
+  if (idx >= 0) map.owner_name = idx;
+  else {
+    idx = classified.findIndex((k) => k === "owner_name");
+    if (idx >= 0) map.owner_name = idx;
+  }
+
+  idx = headerCells.findIndex((c) => /اسم\s*المنطقة|^المنطقة$|^منطقة$|المنطقة/i.test(cellStr(c)));
+  if (idx >= 0) map.area = idx;
+  else {
+    idx = classified.findIndex((k) => k === "area");
+    if (idx >= 0) map.area = idx;
+  }
+
+  if (map.subscriber_number === -1) {
+    for (let i = 0; i < n; i += 1) {
+      if (classified[i] === "subscriber_number" && !isSerialHeader(headerCells[i])) {
+        map.subscriber_number = i;
+        break;
+      }
+    }
+  }
   return map;
+}
+
+function headerRowScore(row) {
+  const cells = row.map(cellStr);
+  let score = 0;
+  if (cells.some((c) => /رقم\s*الاشتراك|رقم\s*المشتراك/i.test(c))) score += 6;
+  if (cells.some((c) => /اسم\s*المشترك|اسم\s*المالك/i.test(c))) score += 3;
+  if (cells.some((c) => /منطق|منطقة|اسم\s*المنطقة/i.test(c))) score += 2;
+  if (cells.some((c) => /نوع\s*الاشتراك/i.test(c))) score += 1;
+  if (cells.some((c) => /مقياس\s*الجباية|مقياس/i.test(c))) score += 1;
+  return score;
+}
+
+function findBestHeaderRowIndex(matrix, maxScan = 25) {
+  let best = -1;
+  let bestScore = -1;
+  for (let i = 0; i < Math.min(matrix.length, maxScan); i += 1) {
+    const row = matrix[i] || [];
+    const sc = headerRowScore(row);
+    if (sc > bestScore) {
+      bestScore = sc;
+      best = i;
+    }
+  }
+  if (best >= 0 && bestScore >= 5) return best;
+  for (let i = 0; i < Math.min(matrix.length, maxScan); i += 1) {
+    const row = matrix[i] || [];
+    if (row.map(cellStr).some((c) => classifyHeaderCell(c))) return i;
+  }
+  return 0;
 }
 
 function findOrCreateAreaByName(areaName, createMissing) {
@@ -589,18 +702,19 @@ app.post(
       return res.status(400).json({ error: "الملف فارغ" });
     }
 
-    const firstRow = matrix[0].map(cellStr);
-    const looksLikeHeader = firstRow.some((c) => classifyHeaderCell(c));
+    const headerRowIdx = findBestHeaderRowIndex(matrix);
+    const headerRow = (matrix[headerRowIdx] || []).map(cellStr);
+    const looksLikeHeader = headerRow.some((c) => classifyHeaderCell(c));
     let startRow = 0;
     let colMap = { subscriber_number: -1, owner_name: -1, area: -1, phone: -1, subscriber_type: -1, billing_plan: -1 };
 
     if (looksLikeHeader) {
-      colMap = mapHeaderRow(firstRow);
-      startRow = 1;
+      colMap = mapHeaderRow(headerRow);
+      startRow = headerRowIdx + 1;
       if (colMap.subscriber_number === -1 || colMap.owner_name === -1 || colMap.area === -1) {
         return res.status(400).json({
           error:
-            "الصف الأول يجب أن يحتوي أعمدة واضحة: رقم المشترك، اسم المالك، المنطقة (واختياري الهاتف)"
+            "تعذر قراءة عناوين الأعمدة. تأكد من وجود أعمدة: رقم الاشتراك (وليس عمود التسلسل)، اسم المشترك، اسم المنطقة"
         });
       }
     } else {
@@ -626,6 +740,8 @@ app.post(
       const subscriber_type = colMap.subscriber_type >= 0 ? get("subscriber_type") : "منزلي";
       const rowBillingPlanText = colMap.billing_plan >= 0 ? get("billing_plan") : "";
       const rowBillingPlan = resolveBillingPlan(rowBillingPlanText, billing_plan);
+
+      if (/بداية\s*سجل/i.test(subscriber_number) || /بداية\s*سجل/i.test(owner_name)) continue;
 
       if (!subscriber_number && !owner_name && !areaText) continue;
 
@@ -670,6 +786,24 @@ function normSearch(q) {
   return cellStr(q).toLowerCase();
 }
 
+/** تقسيم الاستعلام إلى كلمات؛ مطابقة ذكية: كل الكلمات يجب أن تظهر في النص (بأي ترتيب)، مثل «احمد حسين» يطابق «احمد علي حسين». */
+function searchTokens(q) {
+  return normSearch(q)
+    .split(/\s+/)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+}
+
+function matchesSmart(haystack, qRaw) {
+  const q = normSearch(qRaw);
+  if (!q) return false;
+  const hay = cellStr(haystack).toLowerCase();
+  if (!hay) return false;
+  const tokens = searchTokens(qRaw);
+  if (tokens.length <= 1) return hay.includes(q);
+  return tokens.every((t) => hay.includes(t));
+}
+
 app.get("/api/search", authRequired, (req, res) => {
   const q = normSearch(req.query.q || "");
   if (q.length < 1) {
@@ -677,7 +811,7 @@ app.get("/api/search", authRequired, (req, res) => {
   }
 
   const areas = db.areas
-    .filter((a) => cellStr(a.name).toLowerCase().includes(q))
+    .filter((a) => matchesSmart(a.name, req.query.q || ""))
     .map((a) => ({ type: "area", id: a.id, title: a.name, subtitle: "منطقة" }));
 
   const subs = db.subscribers.filter((s) => userCanAccessSubscriber(req.user, s.id));
@@ -686,7 +820,14 @@ app.get("/api/search", authRequired, (req, res) => {
       const num = cellStr(s.subscriber_number).toLowerCase();
       const owner = cellStr(s.owner_name).toLowerCase();
       const phone = cellStr(s.phone).toLowerCase();
-      return num.includes(q) || owner.includes(q) || phone.includes(q);
+      const tokens = searchTokens(req.query.q || "");
+      if (tokens.length <= 1) {
+        return num.includes(q) || owner.includes(q) || phone.includes(q);
+      }
+      const numOk = tokens.every((t) => num.includes(t));
+      const ownerOk = tokens.every((t) => owner.includes(t));
+      const phoneOk = phone && tokens.every((t) => phone.includes(t));
+      return numOk || ownerOk || phoneOk;
     })
     .map((s) => {
       const areaName = db.areas.find((a) => a.id === s.area_id)?.name || "-";
@@ -704,11 +845,14 @@ app.get("/api/search", authRequired, (req, res) => {
       .filter((u) => {
         const name = cellStr(u.name).toLowerCase();
         const code = cellStr(u.code).toLowerCase();
-        return name.includes(q) || code.includes(q);
+        const tokens = searchTokens(req.query.q || "");
+        if (tokens.length <= 1) return name.includes(q) || code.includes(q);
+        return tokens.every((t) => name.includes(t)) || tokens.every((t) => code.includes(t));
       })
       .map((u) => ({
         type: "user",
         id: u.id,
+        role: u.role,
         title: u.name,
         subtitle: `${u.role} — ${u.code}`
       }));
@@ -717,7 +861,11 @@ app.get("/api/search", authRequired, (req, res) => {
   const records = [];
   for (const r of db.records) {
     const recNo = cellStr(r.receipt_number).toLowerCase();
-    if (!recNo || !recNo.includes(q)) continue;
+    if (!recNo) continue;
+    const tokens = searchTokens(req.query.q || "");
+    const recMatch =
+      tokens.length <= 1 ? recNo.includes(q) : tokens.every((t) => recNo.includes(t));
+    if (!recMatch) continue;
     if (!userCanAccessSubscriber(req.user, r.subscriber_id)) continue;
     const sub = db.subscribers.find((s) => s.id === r.subscriber_id);
     if (!sub) continue;

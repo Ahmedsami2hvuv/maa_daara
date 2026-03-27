@@ -5,6 +5,9 @@ let recordsCache = [];
 let settingsCache = null;
 let selectedAreaId = null;
 let forcedSubscribers = null;
+let currentTabId = "areasTab";
+
+const SESSION_KEY = "wbs_token";
 
 const el = (id) => document.getElementById(id);
 
@@ -60,6 +63,77 @@ async function downloadApi(path) {
 function showTab(id) {
   document.querySelectorAll(".tab").forEach((n) => n.classList.add("hidden"));
   el(id).classList.remove("hidden");
+  currentTabId = id;
+}
+
+function goBackInApp() {
+  if (currentTabId === "recordsTab") {
+    showTab("subsTab");
+    loadSubscribers().catch((e) => alert(e.message));
+    return;
+  }
+  if (
+    currentTabId === "subsTab" ||
+    currentTabId === "writersTab" ||
+    currentTabId === "collectorsTab" ||
+    currentTabId === "settingsTab"
+  ) {
+    showTab("areasTab");
+    return;
+  }
+  if (currentTabId === "areasTab") {
+    showTab("subsTab");
+  }
+}
+
+function applyLoggedInUi() {
+  el("welcomeText").textContent = `${me.name} - ${roleLabel(me.role)}`;
+  el("loginCard").classList.add("hidden");
+  el("appPanel").classList.remove("hidden");
+  el("globalSearchWrap").classList.remove("hidden");
+  if (el("appBackBtn")) el("appBackBtn").classList.remove("hidden");
+  if (me.role !== "manager") {
+    el("writersTabBtn").classList.add("hidden");
+    el("collectorsTabBtn").classList.add("hidden");
+    el("settingsTabBtn").classList.add("hidden");
+  } else {
+    el("writersTabBtn").classList.remove("hidden");
+    el("collectorsTabBtn").classList.remove("hidden");
+    el("settingsTabBtn").classList.remove("hidden");
+  }
+  if (!canEdit()) {
+    el("addAreaBtn").disabled = true;
+    el("addSubBtn").disabled = true;
+    el("initYearBtn").disabled = true;
+    if (el("importExcelBtn")) el("importExcelBtn").disabled = true;
+    if (el("excelFile")) el("excelFile").disabled = true;
+  } else {
+    el("addAreaBtn").disabled = false;
+    el("addSubBtn").disabled = false;
+    el("initYearBtn").disabled = false;
+    if (el("importExcelBtn")) el("importExcelBtn").disabled = false;
+    if (el("excelFile")) el("excelFile").disabled = false;
+  }
+}
+
+async function tryRestoreSession() {
+  const saved = sessionStorage.getItem(SESSION_KEY);
+  if (!saved) return;
+  token = saved;
+  try {
+    me = await api("/api/me");
+    applyLoggedInUi();
+    await loadSettings();
+    await loadAreas();
+    await loadSubscribers();
+    if (me.role === "manager") {
+      await loadUsers();
+    }
+  } catch (_e) {
+    token = "";
+    me = null;
+    sessionStorage.removeItem(SESSION_KEY);
+  }
 }
 
 function canEdit() {
@@ -87,28 +161,43 @@ function setCheckedAll(selector, checked) {
 }
 
 function renderBulkLists(areas, subscribers) {
-  if (!el("bulkAreasList") || !el("bulkSubsList")) return;
-  el("bulkAreasList").innerHTML = areas
-    .map((a) => `<label><input type="checkbox" class="bulk-area" value="${a.id}" /> ${escapeHtml(a.name)}</label>`)
-    .join("");
-  el("bulkSubsList").innerHTML = subscribers
-    .map(
-      (s) =>
-        `<label><input type="checkbox" class="bulk-sub" value="${s.id}" /> ${escapeHtml(
-          `${s.subscriber_number} - ${s.owner_name} (${s.area_name || "-"})`
-        )}</label>`
-    )
-    .join("");
+  const mkAreas = (cls) =>
+    areas
+      .map((a) => `<label><input type="checkbox" class="${cls}" value="${a.id}" /> ${escapeHtml(a.name)}</label>`)
+      .join("");
+  const mkSubs = (cls) =>
+    subscribers
+      .map(
+        (s) =>
+          `<label><input type="checkbox" class="${cls}" value="${s.id}" /> ${escapeHtml(
+            `${s.subscriber_number} - ${s.owner_name} (${s.area_name || "-"})`
+          )}</label>`
+      )
+      .join("");
+  if (el("bulkAreasListWriters")) el("bulkAreasListWriters").innerHTML = mkAreas("bulk-area-writer");
+  if (el("bulkSubsListWriters")) el("bulkSubsListWriters").innerHTML = mkSubs("bulk-sub-writer");
+  if (el("bulkAreasListCollectors")) el("bulkAreasListCollectors").innerHTML = mkAreas("bulk-area-collector");
+  if (el("bulkSubsListCollectors")) el("bulkSubsListCollectors").innerHTML = mkSubs("bulk-sub-collector");
 }
 
 function refreshBulkUsers(users) {
-  const role = el("bulkRole")?.value || "writer";
-  const target = users.filter((u) => u.role === role);
-  if (el("bulkUsersList")) {
-    el("bulkUsersList").innerHTML = target
+  const writers = users.filter((u) => u.role === "writer");
+  const collectors = users.filter((u) => u.role === "collector");
+  if (el("bulkUsersListWriters")) {
+    el("bulkUsersListWriters").innerHTML = writers
       .map(
         (u) =>
-          `<label><input type="checkbox" class="bulk-user" value="${u.id}" /> ${escapeHtml(u.name)} - ${escapeHtml(
+          `<label><input type="checkbox" class="bulk-user-writer" value="${u.id}" /> ${escapeHtml(u.name)} - ${escapeHtml(
+            u.code
+          )}</label>`
+      )
+      .join("");
+  }
+  if (el("bulkUsersListCollectors")) {
+    el("bulkUsersListCollectors").innerHTML = collectors
+      .map(
+        (u) =>
+          `<label><input type="checkbox" class="bulk-user-collector" value="${u.id}" /> ${escapeHtml(u.name)} - ${escapeHtml(
             u.code
           )}</label>`
       )
@@ -125,21 +214,8 @@ async function login() {
   });
   token = out.token;
   me = out.user;
-  el("welcomeText").textContent = `${me.name} - ${roleLabel(me.role)}`;
-  el("loginCard").classList.add("hidden");
-  el("appPanel").classList.remove("hidden");
-  el("globalSearchWrap").classList.remove("hidden");
-  if (me.role !== "manager") {
-    el("usersTabBtn").classList.add("hidden");
-    el("settingsTabBtn").classList.add("hidden");
-  }
-  if (!canEdit()) {
-    el("addAreaBtn").disabled = true;
-    el("addSubBtn").disabled = true;
-    el("initYearBtn").disabled = true;
-    if (el("importExcelBtn")) el("importExcelBtn").disabled = true;
-    if (el("excelFile")) el("excelFile").disabled = true;
-  }
+  sessionStorage.setItem(SESSION_KEY, token);
+  applyLoggedInUi();
   await loadSettings();
   await loadAreas();
   await loadSubscribers();
@@ -151,6 +227,7 @@ async function login() {
 function logout() {
   token = "";
   me = null;
+  sessionStorage.removeItem(SESSION_KEY);
   location.reload();
 }
 
@@ -199,6 +276,11 @@ async function saveAreaEdit() {
   alert("تم تعديل اسم المنطقة");
 }
 
+function subscriberRowClick(ev, id) {
+  if (ev.target.closest(".sub-chk-col") || ev.target.closest("input[type=checkbox]")) return;
+  pickSubscriber(id);
+}
+
 async function loadSubscribers() {
   const rows = await api("/api/subscribers");
   subscribersCache = rows;
@@ -208,19 +290,33 @@ async function loadSubscribers() {
   } else if (selectedAreaId) {
     shown = rows.filter((r) => Number(r.area_id) === Number(selectedAreaId));
   }
+  const showBulk = canEdit();
+  if (el("subsBulkBar")) el("subsBulkBar").classList.toggle("hidden", !showBulk);
+  if (el("subsBulkHint") && showBulk) {
+    el("subsBulkHint").textContent =
+      shown.length > 0 ? `عرض ${shown.length} مشترك${selectedAreaId ? " (منطقة محددة)" : ""}` : "";
+  }
+  const chkCell = (r) =>
+    showBulk
+      ? `<td class="sub-chk-col" onclick="event.stopPropagation()"><input type="checkbox" class="sub-select" value="${r.id}" /></td>`
+      : `<td class="sub-chk-col"></td>`;
   el("subsBody").innerHTML = shown
     .map(
-      (r) => `<tr class="subscriber-row" onclick="pickSubscriber(${r.id})" title="افتح السجل السنوي">
-        <td>${r.area_name}</td>
-        <td>${r.subscriber_number}</td>
-        <td>${r.owner_name}</td>
-        <td>${r.subscriber_type || "-"}</td>
-        <td>${r.phone || "-"}</td>
-        <td>${r.billing_plan_label || r.billing_plan || "-"}</td>
+      (r) => `<tr class="subscriber-row" onclick="subscriberRowClick(event, ${r.id})" title="افتح السجل السنوي">
+        ${chkCell(r)}
+        <td>${escapeHtml(String(r.area_name || ""))}</td>
+        <td>${escapeHtml(String(r.subscriber_number || ""))}</td>
+        <td>${escapeHtml(String(r.owner_name || ""))}</td>
+        <td>${escapeHtml(String(r.subscriber_type || "-"))}</td>
+        <td>${escapeHtml(String(r.phone || "-"))}</td>
+        <td>${escapeHtml(String(r.billing_plan_label || r.billing_plan || "-"))}</td>
         <td>افتح</td>
       </tr>`
     )
     .join("");
+  const tbl = el("subsBody")?.closest("table");
+  if (tbl) tbl.classList.toggle("subs-no-bulk", !showBulk);
+  if (el("subsSelectAll")) el("subsSelectAll").checked = false;
   el("recordSub").innerHTML = shown
     .map((r) => `<option value="${r.id}">${r.subscriber_number} - ${r.owner_name}</option>`)
     .join("");
@@ -507,19 +603,35 @@ async function loadUsers() {
   refreshBulkUsers(users);
 }
 
-async function addUser() {
+async function addWriter() {
   await api("/api/users", {
     method: "POST",
     body: JSON.stringify({
-      name: el("userName").value.trim(),
-      role: el("userRole").value,
-      code: el("userCode").value.trim(),
-      pin: el("userPin").value.trim()
+      name: el("writerUserName").value.trim(),
+      role: "writer",
+      code: el("writerUserCode").value.trim(),
+      pin: el("writerUserPin").value.trim()
     })
   });
-  el("userName").value = "";
-  el("userCode").value = "";
-  el("userPin").value = "";
+  el("writerUserName").value = "";
+  el("writerUserCode").value = "";
+  el("writerUserPin").value = "";
+  await loadUsers();
+}
+
+async function addCollector() {
+  await api("/api/users", {
+    method: "POST",
+    body: JSON.stringify({
+      name: el("collectorUserName").value.trim(),
+      role: "collector",
+      code: el("collectorUserCode").value.trim(),
+      pin: el("collectorUserPin").value.trim()
+    })
+  });
+  el("collectorUserName").value = "";
+  el("collectorUserCode").value = "";
+  el("collectorUserPin").value = "";
   await loadUsers();
 }
 
@@ -591,21 +703,36 @@ async function assignSubscriber(subscriberId, userId, type) {
   alert("تم الربط بنجاح");
 }
 
-async function bulkAssign() {
-  const userIds = getCheckedValues(".bulk-user");
-  const assignmentType = el("bulkRole").value;
-  const areaIds = getCheckedValues(".bulk-area");
-  const subscriberIds = getCheckedValues(".bulk-sub");
+async function bulkAssignWriters() {
+  const userIds = getCheckedValues(".bulk-user-writer");
+  const areaIds = getCheckedValues(".bulk-area-writer");
+  const subscriberIds = getCheckedValues(".bulk-sub-writer");
   const out = await api("/api/assignments/bulk", {
     method: "POST",
     body: JSON.stringify({
       user_ids: userIds,
-      assignment_type: assignmentType,
+      assignment_type: "writer",
       area_ids: areaIds,
       subscriber_ids: subscriberIds
     })
   });
-  alert(`تم الإسناد بنجاح لعدد ${out.users_count} موظف. أُضيف ${out.added} ربط جديد.`);
+  alert(`تم الإسناد بنجاح لعدد ${out.users_count} كاتب. أُضيف ${out.added} ربط جديد.`);
+}
+
+async function bulkAssignCollectors() {
+  const userIds = getCheckedValues(".bulk-user-collector");
+  const areaIds = getCheckedValues(".bulk-area-collector");
+  const subscriberIds = getCheckedValues(".bulk-sub-collector");
+  const out = await api("/api/assignments/bulk", {
+    method: "POST",
+    body: JSON.stringify({
+      user_ids: userIds,
+      assignment_type: "collector",
+      area_ids: areaIds,
+      subscriber_ids: subscriberIds
+    })
+  });
+  alert(`تم الإسناد بنجاح لعدد ${out.users_count} محصل. أُضيف ${out.added} ربط جديد.`);
 }
 
 function addPlanRow() {
@@ -618,6 +745,23 @@ function addPlanRow() {
   drawPlans();
 }
 
+async function bulkDeleteSelected() {
+  const ids = [...document.querySelectorAll("#subsBody .sub-select:checked")].map((x) => Number(x.value));
+  if (!ids.length) {
+    alert("حدد مشتركاً واحداً على الأقل");
+    return;
+  }
+  if (!confirm(`حذف ${ids.length} مشترك نهائياً مع سجلاتهم وربطهم؟`)) return;
+  const out = await api("/api/subscribers/bulk-delete", {
+    method: "POST",
+    body: JSON.stringify({ ids })
+  });
+  if (el("subsSelectAll")) el("subsSelectAll").checked = false;
+  await loadSubscribers();
+  if (me.role === "manager") await loadUsers();
+  alert(`تم حذف ${out.removed} مشترك`);
+}
+
 el("loginBtn").onclick = () => login().catch((e) => alert(e.message));
 el("logoutBtn").onclick = logout;
 el("addAreaBtn").onclick = () => addArea().catch((e) => alert(e.message));
@@ -628,17 +772,22 @@ el("saveSubEditBtn").onclick = () => saveSubscriberEdit().catch((e) => alert(e.m
 el("addPrevOwnerBtn").onclick = () => addPreviousOwnerToSubscriber().catch((e) => alert(e.message));
 el("initYearBtn").onclick = () => initYear().catch((e) => alert(e.message));
 el("loadYearBtn").onclick = () => loadRecords().catch((e) => alert(e.message));
-el("addUserBtn").onclick = () => addUser().catch((e) => alert(e.message));
+el("addWriterBtn").onclick = () => addWriter().catch((e) => alert(e.message));
+el("addCollectorBtn").onclick = () => addCollector().catch((e) => alert(e.message));
 el("assignWriterBtn").onclick = () =>
   assignSubscriber(el("assignSubWriter").value, el("assignWriter").value, "writer").catch((e) => alert(e.message));
 el("assignCollectorBtn").onclick = () =>
   assignSubscriber(el("assignSubCollector").value, el("assignCollector").value, "collector").catch((e) => alert(e.message));
-el("bulkAssignBtn").onclick = () => bulkAssign().catch((e) => alert(e.message));
-el("bulkRole").onchange = () => loadUsers().catch((e) => alert(e.message));
-el("selectAllAreasBtn").onclick = () => setCheckedAll(".bulk-area", true);
-el("clearAreasBtn").onclick = () => setCheckedAll(".bulk-area", false);
-el("selectAllSubsBtn").onclick = () => setCheckedAll(".bulk-sub", true);
-el("clearSubsBtn").onclick = () => setCheckedAll(".bulk-sub", false);
+el("bulkAssignWritersBtn").onclick = () => bulkAssignWriters().catch((e) => alert(e.message));
+el("bulkAssignCollectorsBtn").onclick = () => bulkAssignCollectors().catch((e) => alert(e.message));
+el("selectAllAreasBtnWriters").onclick = () => setCheckedAll(".bulk-area-writer", true);
+el("clearAreasBtnWriters").onclick = () => setCheckedAll(".bulk-area-writer", false);
+el("selectAllSubsBtnWriters").onclick = () => setCheckedAll(".bulk-sub-writer", true);
+el("clearSubsBtnWriters").onclick = () => setCheckedAll(".bulk-sub-writer", false);
+el("selectAllAreasBtnCollectors").onclick = () => setCheckedAll(".bulk-area-collector", true);
+el("clearAreasBtnCollectors").onclick = () => setCheckedAll(".bulk-area-collector", false);
+el("selectAllSubsBtnCollectors").onclick = () => setCheckedAll(".bulk-sub-collector", true);
+el("clearSubsBtnCollectors").onclick = () => setCheckedAll(".bulk-sub-collector", false);
 el("saveSettingsBtn").onclick = () => saveSettings().catch((e) => alert(e.message));
 el("addPlanBtn").onclick = addPlanRow;
 el("downloadBackupBtn").onclick = () => downloadBackup().catch((e) => alert(e.message));
@@ -655,6 +804,9 @@ document.querySelectorAll(".tabs button").forEach((btn) => {
       forcedSubscribers = null;
       if (el("subsViewHint")) el("subsViewHint").classList.add("hidden");
       loadSubscribers().catch((e) => alert(e.message));
+    }
+    if (btn.dataset.tab === "writersTab" || btn.dataset.tab === "collectorsTab") {
+      loadUsers().catch((e) => alert(e.message));
     }
     showTab(btn.dataset.tab);
   };
@@ -689,7 +841,9 @@ async function runGlobalSearch() {
       parts.push(
         `<button type="button" class="search-hit" data-type="${escapeHtml(it.type)}" data-id="${escapeHtml(
           String(it.id)
-        )}" data-sid="${escapeHtml(sid)}" data-year="${escapeHtml(yr)}"><strong>${escapeHtml(it.title)}</strong><div class="sr-sub">${escapeHtml(
+        )}" data-sid="${escapeHtml(sid)}" data-year="${escapeHtml(yr)}" data-role="${escapeHtml(
+          it.role || ""
+        )}"><strong>${escapeHtml(it.title)}</strong><div class="sr-sub">${escapeHtml(
           it.subtitle || ""
         )}</div></button>`
       );
@@ -713,7 +867,9 @@ async function runGlobalSearch() {
         } else if (t === "area") {
           showTab("areasTab");
         } else if (t === "user") {
-          showTab("usersTab");
+          const role = btn.getAttribute("data-role") || "";
+          if (role === "collector") showTab("collectorsTab");
+          else showTab("writersTab");
         } else if (t === "record" && sid) {
           el("recordSub").value = sid;
           if (yr) el("recordYear").value = yr;
@@ -769,3 +925,24 @@ document.addEventListener("click", (ev) => {
 });
 
 el("importExcelBtn").onclick = () => importExcel().catch((e) => alert(e.message));
+
+if (el("appBackBtn")) el("appBackBtn").onclick = () => goBackInApp();
+if (el("recordsBackBtn")) {
+  el("recordsBackBtn").onclick = () => {
+    showTab("subsTab");
+    loadSubscribers().catch((e) => alert(e.message));
+  };
+}
+if (el("subsBulkDeleteBtn")) el("subsBulkDeleteBtn").onclick = () => bulkDeleteSelected().catch((e) => alert(e.message));
+if (el("subsSelectAll")) {
+  el("subsSelectAll").addEventListener("change", () => {
+    const on = el("subsSelectAll").checked;
+    document.querySelectorAll("#subsBody .sub-select").forEach((x) => {
+      x.checked = on;
+    });
+  });
+}
+
+window.subscriberRowClick = subscriberRowClick;
+
+tryRestoreSession().catch(() => {});
