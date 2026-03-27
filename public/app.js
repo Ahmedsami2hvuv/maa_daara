@@ -2,8 +2,19 @@ let token = "";
 let me = null;
 let subscribersCache = [];
 let recordsCache = [];
+let settingsCache = null;
 
 const el = (id) => document.getElementById(id);
+
+let searchTimer = null;
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
 async function api(path, options = {}) {
   const res = await fetch(path, {
@@ -19,6 +30,19 @@ async function api(path, options = {}) {
     throw new Error(err.error || "حدث خطأ");
   }
   return res.json();
+}
+
+async function apiForm(path, formData) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    },
+    body: formData
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "حدث خطأ");
+  return data;
 }
 
 async function downloadApi(path) {
@@ -40,6 +64,13 @@ function canEdit() {
   return me && (me.role === "manager" || me.role === "writer");
 }
 
+function roleLabel(role) {
+  if (role === "manager") return "مدير";
+  if (role === "writer") return "كاتب";
+  if (role === "collector") return "محصل";
+  return role;
+}
+
 async function login() {
   const code = el("code").value.trim();
   const pin = el("pin").value.trim();
@@ -49,9 +80,10 @@ async function login() {
   });
   token = out.token;
   me = out.user;
-  el("welcomeText").textContent = `${me.name} - ${me.role}`;
+  el("welcomeText").textContent = `${me.name} - ${roleLabel(me.role)}`;
   el("loginCard").classList.add("hidden");
   el("appPanel").classList.remove("hidden");
+  el("globalSearchWrap").classList.remove("hidden");
   if (me.role !== "manager") {
     el("usersTabBtn").classList.add("hidden");
     el("settingsTabBtn").classList.add("hidden");
@@ -60,12 +92,14 @@ async function login() {
     el("addAreaBtn").disabled = true;
     el("addSubBtn").disabled = true;
     el("initYearBtn").disabled = true;
+    if (el("importExcelBtn")) el("importExcelBtn").disabled = true;
+    if (el("excelFile")) el("excelFile").disabled = true;
   }
+  await loadSettings();
   await loadAreas();
   await loadSubscribers();
   if (me.role === "manager") {
     await loadUsers();
-    await loadSettings();
   }
 }
 
@@ -79,6 +113,15 @@ async function loadAreas() {
   const areas = await api("/api/areas");
   el("areasList").innerHTML = areas.map((a) => `<li>${a.name}</li>`).join("");
   el("subArea").innerHTML = areas.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
+}
+
+function populateBillingPlans() {
+  const plans = settingsCache?.meter_plans || [];
+  const opts = plans
+    .map((p) => `<option value="${p.code}">${p.label} - ${formatNumber(p.water_price)}</option>`)
+    .join("");
+  el("subBillingPlan").innerHTML = opts;
+  if (el("importBillingPlan")) el("importBillingPlan").innerHTML = opts;
 }
 
 async function addArea() {
@@ -100,7 +143,7 @@ async function loadSubscribers() {
         <td>${r.subscriber_number}</td>
         <td>${r.owner_name}</td>
         <td>${r.phone || "-"}</td>
-        <td>${r.meter_size} متر</td>
+        <td>${r.billing_plan_label || r.billing_plan || "-"}</td>
         <td><button onclick="pickSubscriber(${r.id})">اختيار</button></td>
       </tr>`
     )
@@ -122,7 +165,7 @@ async function addSubscriber() {
       subscriber_number: el("subNumber").value.trim(),
       owner_name: el("subOwner").value.trim(),
       phone: el("subPhone").value.trim() || null,
-      meter_size: Number(el("subMeter").value),
+      billing_plan: el("subBillingPlan").value,
       previousOwners
     })
   });
@@ -273,17 +316,26 @@ async function printReceiptPdf() {
 
 async function loadUsers() {
   const users = await api("/api/users");
-  el("usersList").innerHTML = users
-    .map((u) => `<li>${u.name} - ${u.role} - ${u.code}</li>`)
+  const writers = users.filter((u) => u.role === "writer");
+  const collectors = users.filter((u) => u.role === "collector");
+  el("writersList").innerHTML = writers
+    .map((u) => `<li>${u.name} - ${u.code}</li>`)
     .join("");
-  el("assignUser").innerHTML = users
-    .filter((u) => u.role === "writer" || u.role === "collector")
-    .map((u) => `<option value="${u.id}">${u.name} (${u.role})</option>`)
+  el("collectorsList").innerHTML = collectors
+    .map((u) => `<li>${u.name} - ${u.code}</li>`)
+    .join("");
+  el("assignWriter").innerHTML = writers
+    .map((u) => `<option value="${u.id}">${u.name}</option>`)
+    .join("");
+  el("assignCollector").innerHTML = collectors
+    .map((u) => `<option value="${u.id}">${u.name}</option>`)
     .join("");
   const subs = await api("/api/subscribers");
-  el("assignSub").innerHTML = subs
+  const subOptions = subs
     .map((s) => `<option value="${s.id}">${s.subscriber_number} - ${s.owner_name}</option>`)
     .join("");
+  el("assignSubWriter").innerHTML = subOptions;
+  el("assignSubCollector").innerHTML = subOptions;
 }
 
 async function addUser() {
@@ -304,34 +356,78 @@ async function addUser() {
 
 async function loadSettings() {
   const s = await api("/api/settings");
-  el("price3").value = s.price_3m;
-  el("price4").value = s.price_4m;
+  settingsCache = s;
   el("cleanFee").value = s.cleaning_fee;
   el("interestRate").value = s.monthly_interest;
+  drawPlans();
+  populateBillingPlans();
+}
+
+function drawPlans() {
+  const plans = settingsCache?.meter_plans || [];
+  el("plansWrap").innerHTML = plans
+    .map(
+      (p, idx) => `<div class="grid plan-row">
+        <input id="plan-label-${idx}" placeholder="اسم النظام" value="${p.label}" />
+        <input id="plan-code-${idx}" placeholder="رمز النظام" value="${p.code}" />
+        <input id="plan-price-${idx}" type="number" placeholder="سعر الماء" value="${p.water_price}" />
+        <button onclick="removePlan(${idx})" class="danger">حذف</button>
+      </div>`
+    )
+    .join("");
+}
+
+function removePlan(idx) {
+  settingsCache.meter_plans.splice(idx, 1);
+  drawPlans();
+  populateBillingPlans();
+}
+
+function collectPlans() {
+  const old = settingsCache?.meter_plans || [];
+  return old
+    .map((_, idx) => ({
+      label: el(`plan-label-${idx}`)?.value?.trim() || "",
+      code: el(`plan-code-${idx}`)?.value?.trim() || "",
+      water_price: Number(el(`plan-price-${idx}`)?.value || 0)
+    }))
+    .filter((p) => p.label && p.code);
 }
 
 async function saveSettings() {
+  const plans = collectPlans();
   await api("/api/settings", {
     method: "PUT",
     body: JSON.stringify({
-      price_3m: Number(el("price3").value),
-      price_4m: Number(el("price4").value),
       cleaning_fee: Number(el("cleanFee").value),
-      monthly_interest: Number(el("interestRate").value)
+      monthly_interest: Number(el("interestRate").value),
+      meter_plans: plans
     })
   });
+  settingsCache.meter_plans = plans;
+  populateBillingPlans();
   alert("تم حفظ الاعدادات");
 }
 
-async function assignSubscriber() {
-  await api(`/api/subscribers/${Number(el("assignSub").value)}/assign`, {
+async function assignSubscriber(subscriberId, userId, type) {
+  await api(`/api/subscribers/${subscriberId}/assign`, {
     method: "POST",
     body: JSON.stringify({
-      user_id: Number(el("assignUser").value),
-      assignment_type: el("assignType").value
+      user_id: Number(userId),
+      assignment_type: type
     })
   });
   alert("تم الربط بنجاح");
+}
+
+function addPlanRow() {
+  if (!settingsCache) settingsCache = { meter_plans: [] };
+  settingsCache.meter_plans.push({
+    code: `plan${settingsCache.meter_plans.length + 1}`,
+    label: "نظام جديد",
+    water_price: 0
+  });
+  drawPlans();
 }
 
 el("loginBtn").onclick = () => login().catch((e) => alert(e.message));
@@ -341,8 +437,12 @@ el("addSubBtn").onclick = () => addSubscriber().catch((e) => alert(e.message));
 el("initYearBtn").onclick = () => initYear().catch((e) => alert(e.message));
 el("loadYearBtn").onclick = () => loadRecords().catch((e) => alert(e.message));
 el("addUserBtn").onclick = () => addUser().catch((e) => alert(e.message));
-el("assignBtn").onclick = () => assignSubscriber().catch((e) => alert(e.message));
+el("assignWriterBtn").onclick = () =>
+  assignSubscriber(el("assignSubWriter").value, el("assignWriter").value, "writer").catch((e) => alert(e.message));
+el("assignCollectorBtn").onclick = () =>
+  assignSubscriber(el("assignSubCollector").value, el("assignCollector").value, "collector").catch((e) => alert(e.message));
 el("saveSettingsBtn").onclick = () => saveSettings().catch((e) => alert(e.message));
+el("addPlanBtn").onclick = addPlanRow;
 el("downloadBackupBtn").onclick = () => downloadBackup().catch((e) => alert(e.message));
 el("printReceiptBtn").onclick = () => printReceiptPdf().catch((e) => alert(e.message));
 el("restoreFile").onchange = (evt) => {
@@ -357,3 +457,105 @@ document.querySelectorAll(".tabs button").forEach((btn) => {
 
 window.pickSubscriber = pickSubscriber;
 window.saveRecord = saveRecord;
+window.removePlan = removePlan;
+
+async function runGlobalSearch() {
+  const q = el("globalSearch").value.trim();
+  const box = el("searchResults");
+  if (q.length < 1) {
+    box.classList.add("hidden");
+    box.innerHTML = "";
+    return;
+  }
+  const data = await api(`/api/search?q=${encodeURIComponent(q)}`);
+  const parts = [];
+  const pushSection = (label, items) => {
+    if (!items.length) return;
+    parts.push(`<div class="sr-sub" style="padding:6px 10px;background:#f1f5f9;">${escapeHtml(label)}</div>`);
+    items.forEach((it) => {
+      const sid = it.subscriber_id != null ? String(it.subscriber_id) : "";
+      const yr = it.year != null ? String(it.year) : "";
+      parts.push(
+        `<button type="button" class="search-hit" data-type="${escapeHtml(it.type)}" data-id="${escapeHtml(
+          String(it.id)
+        )}" data-sid="${escapeHtml(sid)}" data-year="${escapeHtml(yr)}"><strong>${escapeHtml(it.title)}</strong><div class="sr-sub">${escapeHtml(
+          it.subtitle || ""
+        )}</div></button>`
+      );
+    });
+  };
+  pushSection("مناطق", data.areas || []);
+  pushSection("مشتركين", data.subscribers || []);
+  pushSection("موظفين", data.users || []);
+  pushSection("وصول", data.records || []);
+  if (!parts.length) {
+    box.innerHTML = `<div class="sr-sub" style="padding:10px;">لا توجد نتائج</div>`;
+  } else {
+    box.innerHTML = parts.join("");
+    box.querySelectorAll(".search-hit").forEach((btn) => {
+      btn.onclick = () => {
+        const t = btn.getAttribute("data-type");
+        const sid = btn.getAttribute("data-sid");
+        const yr = btn.getAttribute("data-year");
+        if (t === "subscriber") {
+          pickSubscriber(Number(btn.getAttribute("data-id")));
+          showTab("subsTab");
+        } else if (t === "area") {
+          showTab("areasTab");
+        } else if (t === "user") {
+          showTab("usersTab");
+        } else if (t === "record" && sid) {
+          el("recordSub").value = sid;
+          if (yr) el("recordYear").value = yr;
+          showTab("recordsTab");
+          loadRecords().catch((e) => alert(e.message));
+        }
+        box.classList.add("hidden");
+      };
+    });
+  }
+  box.classList.remove("hidden");
+}
+
+async function importExcel() {
+  const fileInput = el("excelFile");
+  const file = fileInput.files?.[0];
+  if (!file) {
+    alert("اختر ملف Excel أولاً");
+    return;
+  }
+  const fd = new FormData();
+  fd.append("file", file);
+  fd.append("billing_plan", el("importBillingPlan").value);
+  fd.append("create_areas", el("importCreateAreas").checked ? "true" : "false");
+  fd.append("skip_duplicates", el("importSkipDup").checked ? "true" : "false");
+  const out = await apiForm("/api/subscribers/import", fd);
+  const pre = el("importResult");
+  pre.classList.remove("hidden");
+  let text = `${out.message || "تم"}\n`;
+  if (out.errors?.length) {
+    text += `\nأخطاء:\n${out.errors.map((e) => `سطر ${e.row}: ${e.message}`).join("\n")}`;
+  }
+  pre.textContent = text;
+  fileInput.value = "";
+  await loadAreas();
+  await loadSubscribers();
+  if (me.role === "manager") await loadUsers();
+}
+
+el("globalSearch").addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => runGlobalSearch().catch((e) => alert(e.message)), 280);
+});
+
+el("globalSearch").addEventListener("focus", () => {
+  if (el("globalSearch").value.trim()) runGlobalSearch().catch(() => {});
+});
+
+document.addEventListener("click", (ev) => {
+  const wrap = el("globalSearchWrap");
+  if (!wrap || wrap.classList.contains("hidden")) return;
+  if (!wrap.contains(ev.target)) el("searchResults").classList.add("hidden");
+});
+
+el("importExcelBtn").onclick = () => importExcel().catch((e) => alert(e.message));

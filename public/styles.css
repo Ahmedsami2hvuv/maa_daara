@@ -17,6 +17,82 @@ body {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.global-search {
+  position: relative;
+  flex: 1;
+  min-width: 200px;
+  max-width: 520px;
+}
+.global-search input[type="search"] {
+  width: 100%;
+  box-sizing: border-box;
+  border-radius: 999px;
+  padding: 10px 16px;
+  border: none;
+  color: #1f2937;
+}
+.search-results {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  background: #fff;
+  color: #1f2937;
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  max-height: 320px;
+  overflow-y: auto;
+  z-index: 100;
+}
+.search-results button {
+  width: 100%;
+  text-align: right;
+  background: transparent;
+  color: #1f2937;
+  border: none;
+  border-bottom: 1px solid #eee;
+  border-radius: 0;
+  padding: 10px 12px;
+  cursor: pointer;
+}
+.search-results button:hover {
+  background: #f3f6fb;
+  opacity: 1;
+}
+.search-results .sr-sub {
+  font-size: 12px;
+  color: #64748b;
+}
+.inner-card {
+  margin-bottom: 12px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+}
+.import-block h4 {
+  margin-top: 0;
+}
+.wrap-row {
+  align-items: center;
+}
+.chk {
+  font-size: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.import-result {
+  margin-top: 10px;
+  padding: 10px;
+  background: #1e293b;
+  color: #e2e8f0;
+  border-radius: 8px;
+  font-size: 13px;
+  white-space: pre-wrap;
+  max-height: 200px;
+  overflow: auto;
 }
 .brand {
   font-weight: 700;
