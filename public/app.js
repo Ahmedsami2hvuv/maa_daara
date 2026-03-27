@@ -3,6 +3,8 @@ let me = null;
 let subscribersCache = [];
 let recordsCache = [];
 let settingsCache = null;
+let selectedAreaId = null;
+let forcedSubscribers = null;
 
 const el = (id) => document.getElementById(id);
 
@@ -71,6 +73,49 @@ function roleLabel(role) {
   return role;
 }
 
+function getCheckedValues(selector) {
+  return [...document.querySelectorAll(selector)]
+    .filter((x) => x.checked)
+    .map((x) => Number(x.value))
+    .filter((x) => Number.isFinite(x));
+}
+
+function setCheckedAll(selector, checked) {
+  document.querySelectorAll(selector).forEach((x) => {
+    x.checked = checked;
+  });
+}
+
+function renderBulkLists(areas, subscribers) {
+  if (!el("bulkAreasList") || !el("bulkSubsList")) return;
+  el("bulkAreasList").innerHTML = areas
+    .map((a) => `<label><input type="checkbox" class="bulk-area" value="${a.id}" /> ${escapeHtml(a.name)}</label>`)
+    .join("");
+  el("bulkSubsList").innerHTML = subscribers
+    .map(
+      (s) =>
+        `<label><input type="checkbox" class="bulk-sub" value="${s.id}" /> ${escapeHtml(
+          `${s.subscriber_number} - ${s.owner_name} (${s.area_name || "-"})`
+        )}</label>`
+    )
+    .join("");
+}
+
+function refreshBulkUsers(users) {
+  const role = el("bulkRole")?.value || "writer";
+  const target = users.filter((u) => u.role === role);
+  if (el("bulkUsersList")) {
+    el("bulkUsersList").innerHTML = target
+      .map(
+        (u) =>
+          `<label><input type="checkbox" class="bulk-user" value="${u.id}" /> ${escapeHtml(u.name)} - ${escapeHtml(
+            u.code
+          )}</label>`
+      )
+      .join("");
+  }
+}
+
 async function login() {
   const code = el("code").value.trim();
   const pin = el("pin").value.trim();
@@ -111,8 +156,16 @@ function logout() {
 
 async function loadAreas() {
   const areas = await api("/api/areas");
-  el("areasList").innerHTML = areas.map((a) => `<li>${a.name}</li>`).join("");
-  el("subArea").innerHTML = areas.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
+  el("areasList").innerHTML = areas
+    .map(
+      (a) =>
+        `<li><button type="button" class="link-btn" onclick="openAreaSubscribers(${a.id})">${escapeHtml(a.name)}</button></li>`
+    )
+    .join("");
+  const opts = areas.map((a) => `<option value="${a.id}">${a.name}</option>`).join("");
+  el("subArea").innerHTML = opts;
+  if (el("editAreaSelect")) el("editAreaSelect").innerHTML = opts;
+  if (el("editSubArea")) el("editSubArea").innerHTML = opts;
 }
 
 function populateBillingPlans() {
@@ -133,24 +186,75 @@ async function addArea() {
   await loadAreas();
 }
 
+async function saveAreaEdit() {
+  const id = Number(el("editAreaSelect").value);
+  const name = el("editAreaName").value.trim();
+  await api(`/api/areas/${id}`, {
+    method: "PUT",
+    body: JSON.stringify({ name })
+  });
+  el("editAreaName").value = "";
+  await loadAreas();
+  await loadSubscribers();
+  alert("تم تعديل اسم المنطقة");
+}
+
 async function loadSubscribers() {
   const rows = await api("/api/subscribers");
   subscribersCache = rows;
-  el("subsBody").innerHTML = rows
+  let shown = rows;
+  if (forcedSubscribers) {
+    shown = forcedSubscribers;
+  } else if (selectedAreaId) {
+    shown = rows.filter((r) => Number(r.area_id) === Number(selectedAreaId));
+  }
+  el("subsBody").innerHTML = shown
     .map(
-      (r) => `<tr>
+      (r) => `<tr class="subscriber-row" onclick="pickSubscriber(${r.id})" title="افتح السجل السنوي">
         <td>${r.area_name}</td>
         <td>${r.subscriber_number}</td>
         <td>${r.owner_name}</td>
+        <td>${r.subscriber_type || "-"}</td>
         <td>${r.phone || "-"}</td>
         <td>${r.billing_plan_label || r.billing_plan || "-"}</td>
-        <td><button onclick="pickSubscriber(${r.id})">اختيار</button></td>
+        <td>افتح</td>
       </tr>`
     )
     .join("");
-  el("recordSub").innerHTML = rows
+  el("recordSub").innerHTML = shown
     .map((r) => `<option value="${r.id}">${r.subscriber_number} - ${r.owner_name}</option>`)
     .join("");
+  if (el("editSubSelect")) {
+    el("editSubSelect").innerHTML = shown
+      .map((r) => `<option value="${r.id}">${r.subscriber_number} - ${r.owner_name}</option>`)
+      .join("");
+  }
+  if (el("subsViewHint")) {
+    if (forcedSubscribers) el("subsViewHint").classList.remove("hidden");
+    else el("subsViewHint").classList.add("hidden");
+  }
+}
+
+async function openAreaSubscribers(areaId) {
+  forcedSubscribers = null;
+  if (el("subsViewHint")) el("subsViewHint").classList.add("hidden");
+  selectedAreaId = Number(areaId);
+  showTab("subsTab");
+  if (el("subArea")) el("subArea").value = String(areaId);
+  await loadSubscribers();
+}
+
+async function openUserAssignedSubscribers(userId) {
+  selectedAreaId = null;
+  const out = await api(`/api/users/${Number(userId)}/subscribers`);
+  forcedSubscribers = out.subscribers || [];
+  const roleText = roleLabel(out.user?.role || "");
+  if (el("subsViewHint")) {
+    el("subsViewHint").textContent = `عرض مشتركين ${roleText}: ${out.user?.name || "-"} (${forcedSubscribers.length})`;
+    el("subsViewHint").classList.remove("hidden");
+  }
+  showTab("subsTab");
+  await loadSubscribers();
 }
 
 async function addSubscriber() {
@@ -164,6 +268,7 @@ async function addSubscriber() {
       area_id: Number(el("subArea").value),
       subscriber_number: el("subNumber").value.trim(),
       owner_name: el("subOwner").value.trim(),
+      subscriber_type: el("subType").value,
       phone: el("subPhone").value.trim() || null,
       billing_plan: el("subBillingPlan").value,
       previousOwners
@@ -171,9 +276,56 @@ async function addSubscriber() {
   });
   el("subNumber").value = "";
   el("subOwner").value = "";
+  el("subType").value = "منزلي";
   el("subPhone").value = "";
   el("subPrevOwners").value = "";
   await loadSubscribers();
+}
+
+async function loadSubscriberForEdit() {
+  const id = Number(el("editSubSelect").value);
+  const out = await api(`/api/subscribers/${id}/details`);
+  const s = out.subscriber;
+  el("editSubArea").value = String(s.area_id);
+  el("editSubNumber").value = s.subscriber_number || "";
+  el("editSubOwner").value = s.owner_name || "";
+  el("editSubType").value = s.subscriber_type || "منزلي";
+  el("editSubPhone").value = s.phone || "";
+  el("editSubBillingPlan").innerHTML = el("subBillingPlan").innerHTML;
+  el("editSubBillingPlan").value = s.billing_plan || "";
+  el("prevOwnersList").innerHTML = (out.previousOwners || [])
+    .map((p) => `<li>${escapeHtml(p.owner_name)}</li>`)
+    .join("");
+}
+
+async function saveSubscriberEdit() {
+  const id = Number(el("editSubSelect").value);
+  await api(`/api/subscribers/${id}`, {
+    method: "PUT",
+    body: JSON.stringify({
+      area_id: Number(el("editSubArea").value),
+      subscriber_number: el("editSubNumber").value.trim(),
+      owner_name: el("editSubOwner").value.trim(),
+      subscriber_type: el("editSubType").value,
+      phone: el("editSubPhone").value.trim() || null,
+      billing_plan: el("editSubBillingPlan").value
+    })
+  });
+  await loadSubscribers();
+  await loadSubscriberForEdit();
+  alert("تم تعديل بيانات المشترك");
+}
+
+async function addPreviousOwnerToSubscriber() {
+  const id = Number(el("editSubSelect").value);
+  const ownerName = el("newPrevOwner").value.trim();
+  await api(`/api/subscribers/${id}/previous-owners`, {
+    method: "POST",
+    body: JSON.stringify({ owner_name: ownerName })
+  });
+  el("newPrevOwner").value = "";
+  await loadSubscriberForEdit();
+  alert("تمت إضافة مالك سابق");
 }
 
 function pickSubscriber(id) {
@@ -201,6 +353,7 @@ async function loadRecords() {
         <td><input type="number" value="${r.water}" id="water-${r.id}" ${canEdit() ? "" : "disabled"} /></td>
         <td><input type="number" value="${r.cleaning}" id="clean-${r.id}" ${canEdit() ? "" : "disabled"} /></td>
         <td><input type="number" value="${r.interest}" id="interest-${r.id}" ${canEdit() ? "" : "disabled"} /></td>
+        <td><input type="number" value="${Number(r.other || 0)}" id="other-${r.id}" ${canEdit() ? "" : "disabled"} /></td>
         <td>${r.subtotal.toFixed(0)}</td>
         <td>${r.debt.toFixed(0)}</td>
         <td>${r.total_due.toFixed(0)}</td>
@@ -222,6 +375,7 @@ async function saveRecord(id) {
       water: Number(el(`water-${id}`).value || 0),
       cleaning: Number(el(`clean-${id}`).value || 0),
       interest: Number(el(`interest-${id}`).value || 0),
+      other: Number(el(`other-${id}`).value || 0),
       paid: Number(el(`paid-${id}`).value || 0),
       receipt_number: el(`recno-${id}`).value || null,
       receipt_date: el(`recdate-${id}`).value || null
@@ -262,25 +416,27 @@ function formatNumber(num) {
 
 function buildReceiptText(subscriber, year, row) {
   return [
-    "Water Billing Receipt",
+    "وصل جباية الماء",
     "------------------------------------",
-    `Subscriber No: ${subscriber?.subscriber_number || "-"}`,
-    `Owner: ${subscriber?.owner_name || "-"}`,
-    `Area: ${subscriber?.area_name || "-"}`,
-    `Year: ${year}`,
-    `Period: ${row?.date_from || "-"} -> ${row?.date_to || "-"}`,
+    `رقم المشترك: ${subscriber?.subscriber_number || "-"}`,
+    `اسم المالك: ${subscriber?.owner_name || "-"}`,
+    `المنطقة: ${subscriber?.area_name || "-"}`,
+    `السنة: ${year}`,
+    `الفترة: ${row?.date_from || "-"} -> ${row?.date_to || "-"}`,
     "------------------------------------",
-    `Water: ${formatNumber(row?.water)}`,
-    `Cleaning: ${formatNumber(row?.cleaning)}`,
-    `Interest: ${formatNumber(row?.interest)}`,
-    `Subtotal: ${formatNumber(row?.subtotal)}`,
-    `Debt: ${formatNumber(row?.debt)}`,
-    `Total Due: ${formatNumber(row?.total_due)}`,
-    `Paid: ${formatNumber(row?.paid)}`,
+    `الماء: ${formatNumber(row?.water)}`,
+    `التنظيف: ${formatNumber(row?.cleaning)}`,
+    `الفائدة: ${formatNumber(row?.interest)}`,
+    `اخرى: ${formatNumber(row?.other)}`,
+    `المجموع: ${formatNumber(row?.subtotal)}`,
+    `الديون: ${formatNumber(row?.debt)}`,
+    `المجموع الكلي: ${formatNumber(row?.total_due)}`,
+    `المدفوع: ${formatNumber(row?.paid)}`,
+    `المتبقي: ${formatNumber(Number(row?.total_due || 0) - Number(row?.paid || 0))}`,
     "------------------------------------",
-    `Receipt No: ${row?.receipt_number || "-"}`,
-    `Receipt Date: ${row?.receipt_date || "-"}`,
-    `Printed At: ${new Date().toLocaleString()}`
+    `رقم الوصل: ${row?.receipt_number || "-"}`,
+    `تاريخ الوصل: ${row?.receipt_date || "-"}`,
+    `وقت الطباعة: ${new Date().toLocaleString("ar-IQ")}`
   ];
 }
 
@@ -319,10 +475,20 @@ async function loadUsers() {
   const writers = users.filter((u) => u.role === "writer");
   const collectors = users.filter((u) => u.role === "collector");
   el("writersList").innerHTML = writers
-    .map((u) => `<li>${u.name} - ${u.code}</li>`)
+    .map(
+      (u) =>
+        `<li><button type="button" class="link-btn" onclick="openUserAssignedSubscribers(${u.id})">${escapeHtml(
+          u.name
+        )}</button> - ${escapeHtml(u.code)}</li>`
+    )
     .join("");
   el("collectorsList").innerHTML = collectors
-    .map((u) => `<li>${u.name} - ${u.code}</li>`)
+    .map(
+      (u) =>
+        `<li><button type="button" class="link-btn" onclick="openUserAssignedSubscribers(${u.id})">${escapeHtml(
+          u.name
+        )}</button> - ${escapeHtml(u.code)}</li>`
+    )
     .join("");
   el("assignWriter").innerHTML = writers
     .map((u) => `<option value="${u.id}">${u.name}</option>`)
@@ -336,6 +502,9 @@ async function loadUsers() {
     .join("");
   el("assignSubWriter").innerHTML = subOptions;
   el("assignSubCollector").innerHTML = subOptions;
+  const areas = await api("/api/areas");
+  renderBulkLists(areas, subs);
+  refreshBulkUsers(users);
 }
 
 async function addUser() {
@@ -359,6 +528,7 @@ async function loadSettings() {
   settingsCache = s;
   el("cleanFee").value = s.cleaning_fee;
   el("interestRate").value = s.monthly_interest;
+  if (el("otherFee")) el("otherFee").value = Number(s.other_fee || 24600);
   drawPlans();
   populateBillingPlans();
 }
@@ -401,6 +571,7 @@ async function saveSettings() {
     body: JSON.stringify({
       cleaning_fee: Number(el("cleanFee").value),
       monthly_interest: Number(el("interestRate").value),
+      other_fee: Number(el("otherFee").value || 0),
       meter_plans: plans
     })
   });
@@ -420,6 +591,23 @@ async function assignSubscriber(subscriberId, userId, type) {
   alert("تم الربط بنجاح");
 }
 
+async function bulkAssign() {
+  const userIds = getCheckedValues(".bulk-user");
+  const assignmentType = el("bulkRole").value;
+  const areaIds = getCheckedValues(".bulk-area");
+  const subscriberIds = getCheckedValues(".bulk-sub");
+  const out = await api("/api/assignments/bulk", {
+    method: "POST",
+    body: JSON.stringify({
+      user_ids: userIds,
+      assignment_type: assignmentType,
+      area_ids: areaIds,
+      subscriber_ids: subscriberIds
+    })
+  });
+  alert(`تم الإسناد بنجاح لعدد ${out.users_count} موظف. أُضيف ${out.added} ربط جديد.`);
+}
+
 function addPlanRow() {
   if (!settingsCache) settingsCache = { meter_plans: [] };
   settingsCache.meter_plans.push({
@@ -433,7 +621,11 @@ function addPlanRow() {
 el("loginBtn").onclick = () => login().catch((e) => alert(e.message));
 el("logoutBtn").onclick = logout;
 el("addAreaBtn").onclick = () => addArea().catch((e) => alert(e.message));
+el("saveAreaEditBtn").onclick = () => saveAreaEdit().catch((e) => alert(e.message));
 el("addSubBtn").onclick = () => addSubscriber().catch((e) => alert(e.message));
+el("loadSubEditBtn").onclick = () => loadSubscriberForEdit().catch((e) => alert(e.message));
+el("saveSubEditBtn").onclick = () => saveSubscriberEdit().catch((e) => alert(e.message));
+el("addPrevOwnerBtn").onclick = () => addPreviousOwnerToSubscriber().catch((e) => alert(e.message));
 el("initYearBtn").onclick = () => initYear().catch((e) => alert(e.message));
 el("loadYearBtn").onclick = () => loadRecords().catch((e) => alert(e.message));
 el("addUserBtn").onclick = () => addUser().catch((e) => alert(e.message));
@@ -441,6 +633,12 @@ el("assignWriterBtn").onclick = () =>
   assignSubscriber(el("assignSubWriter").value, el("assignWriter").value, "writer").catch((e) => alert(e.message));
 el("assignCollectorBtn").onclick = () =>
   assignSubscriber(el("assignSubCollector").value, el("assignCollector").value, "collector").catch((e) => alert(e.message));
+el("bulkAssignBtn").onclick = () => bulkAssign().catch((e) => alert(e.message));
+el("bulkRole").onchange = () => loadUsers().catch((e) => alert(e.message));
+el("selectAllAreasBtn").onclick = () => setCheckedAll(".bulk-area", true);
+el("clearAreasBtn").onclick = () => setCheckedAll(".bulk-area", false);
+el("selectAllSubsBtn").onclick = () => setCheckedAll(".bulk-sub", true);
+el("clearSubsBtn").onclick = () => setCheckedAll(".bulk-sub", false);
 el("saveSettingsBtn").onclick = () => saveSettings().catch((e) => alert(e.message));
 el("addPlanBtn").onclick = addPlanRow;
 el("downloadBackupBtn").onclick = () => downloadBackup().catch((e) => alert(e.message));
@@ -452,12 +650,25 @@ el("restoreFile").onchange = (evt) => {
 };
 
 document.querySelectorAll(".tabs button").forEach((btn) => {
-  btn.onclick = () => showTab(btn.dataset.tab);
+  btn.onclick = () => {
+    if (btn.dataset.tab === "subsTab") {
+      forcedSubscribers = null;
+      if (el("subsViewHint")) el("subsViewHint").classList.add("hidden");
+      loadSubscribers().catch((e) => alert(e.message));
+    }
+    showTab(btn.dataset.tab);
+  };
 });
 
 window.pickSubscriber = pickSubscriber;
 window.saveRecord = saveRecord;
 window.removePlan = removePlan;
+window.openAreaSubscribers = (areaId) => {
+  openAreaSubscribers(areaId).catch((e) => alert(e.message));
+};
+window.openUserAssignedSubscribers = (userId) => {
+  openUserAssignedSubscribers(userId).catch((e) => alert(e.message));
+};
 
 async function runGlobalSearch() {
   const q = el("globalSearch").value.trim();

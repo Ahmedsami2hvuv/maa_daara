@@ -94,6 +94,32 @@ body {
   max-height: 200px;
   overflow: auto;
 }
+.checklist {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px;
+  max-height: 220px;
+  overflow: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 8px;
+  margin-bottom: 10px;
+  background: #fff;
+}
+.checklist label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+}
+.link-btn {
+  background: transparent;
+  color: #0c7ed5;
+  border: none;
+  padding: 0;
+  text-decoration: underline;
+  cursor: pointer;
+}
 .brand {
   font-weight: 700;
 }
@@ -172,6 +198,12 @@ th, td {
 }
 th {
   background: #f7f7f7;
+}
+.subscriber-row {
+  cursor: pointer;
+}
+.subscriber-row:hover {
+  background: #eef6ff;
 }
 .hidden {
   display: none;

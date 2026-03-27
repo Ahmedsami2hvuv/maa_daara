@@ -25,6 +25,7 @@ function defaultData() {
     settings: {
       cleaning_fee: 3000,
       monthly_interest: 0.01,
+      other_fee: 24600,
       meter_plans: [
         { code: "3m", label: "3 متر", water_price: 21600 },
         { code: "4m", label: "4 متر", water_price: 30000 }
@@ -63,6 +64,7 @@ function normalizeData(raw) {
   }
   data.settings.cleaning_fee = Number(data.settings.cleaning_fee || 3000);
   data.settings.monthly_interest = Number(data.settings.monthly_interest || 0.01);
+  data.settings.other_fee = Number(data.settings.other_fee || 24600);
 
   if (!Array.isArray(data.users)) data.users = [];
   for (const user of data.users) {
@@ -73,6 +75,15 @@ function normalizeData(raw) {
   for (const sub of data.subscribers) {
     if (!sub.billing_plan) {
       sub.billing_plan = Number(sub.meter_size) === 4 ? "4m" : "3m";
+    }
+    if (!sub.subscriber_type) {
+      sub.subscriber_type = "منزلي";
+    }
+  }
+  if (!Array.isArray(data.records)) data.records = [];
+  for (const r of data.records) {
+    if (r.other === undefined || r.other === null) {
+      r.other = data.settings.other_fee;
     }
   }
   return data;
@@ -105,7 +116,7 @@ function allowRoles(...roles) {
 }
 
 function userCanAccessSubscriber(user, subscriberId) {
-  if (user.role === "manager") return true;
+  if (user.role === "manager" || user.role === "writer") return true;
   return db.assignments.some((a) => a.subscriber_id === subscriberId && a.user_id === user.id);
 }
 
@@ -124,7 +135,11 @@ function recalcYear(subscriberId, year) {
     if (i > 0) {
       rows[i].interest = rows[i - 1].paid > 0 ? 0 : Number((db.settings.monthly_interest * 1000).toFixed(2));
     }
-    rows[i].subtotal = Number(rows[i].water || 0) + Number(rows[i].cleaning || 0) + Number(rows[i].interest || 0);
+    rows[i].subtotal =
+      Number(rows[i].water || 0) +
+      Number(rows[i].cleaning || 0) +
+      Number(rows[i].interest || 0) +
+      Number(rows[i].other || 0);
     rows[i].debt = debt;
     rows[i].total_due = rows[i].subtotal + debt;
     debt = Math.max(rows[i].total_due - Number(rows[i].paid || 0), 0);
@@ -149,6 +164,7 @@ app.put("/api/settings", authRequired, allowRoles("manager"), (req, res) => {
     ...db.settings,
     cleaning_fee: Number(incoming.cleaning_fee ?? db.settings.cleaning_fee),
     monthly_interest: Number(incoming.monthly_interest ?? db.settings.monthly_interest),
+    other_fee: Number(incoming.other_fee ?? db.settings.other_fee),
     meter_plans: Array.isArray(incoming.meter_plans) ? incoming.meter_plans : db.settings.meter_plans
   };
   next.meter_plans = next.meter_plans
@@ -196,6 +212,24 @@ app.get("/api/users", authRequired, allowRoles("manager"), (req, res) => {
   res.json(db.users.map((u) => ({ id: u.id, name: u.name, role: u.role, code: u.code })));
 });
 
+app.get("/api/users/:id/subscribers", authRequired, allowRoles("manager"), (req, res) => {
+  const userId = Number(req.params.id);
+  const user = db.users.find((u) => u.id === userId);
+  if (!user) return res.status(404).json({ error: "المستخدم غير موجود" });
+  const assignedIds = db.assignments
+    .filter((a) => a.user_id === userId)
+    .map((a) => a.subscriber_id);
+  const uniqueIds = [...new Set(assignedIds)];
+  const rows = db.subscribers
+    .filter((s) => uniqueIds.includes(s.id))
+    .map((s) => ({
+      ...s,
+      area_name: db.areas.find((a) => a.id === s.area_id)?.name || "-",
+      billing_plan_label: db.settings.meter_plans.find((p) => p.code === s.billing_plan)?.label || s.billing_plan
+    }));
+  res.json({ user: { id: user.id, name: user.name, role: user.role }, subscribers: rows });
+});
+
 app.post("/api/users", authRequired, allowRoles("manager"), (req, res) => {
   const { name, role, code, pin } = req.body || {};
   if (!name || !role || !code || !pin) return res.status(400).json({ error: "اكمل الحقول" });
@@ -214,6 +248,17 @@ app.post("/api/areas", authRequired, allowRoles("manager", "writer"), (req, res)
   res.json({ ok: true });
 });
 
+app.put("/api/areas/:id", authRequired, allowRoles("manager", "writer"), (req, res) => {
+  const id = Number(req.params.id);
+  const { name } = req.body || {};
+  const area = db.areas.find((a) => a.id === id);
+  if (!area) return res.status(404).json({ error: "المنطقة غير موجودة" });
+  if (!name || !String(name).trim()) return res.status(400).json({ error: "الاسم الجديد مطلوب" });
+  area.name = String(name).trim();
+  saveDB();
+  res.json({ ok: true, area });
+});
+
 app.get("/api/subscribers", authRequired, (req, res) => {
   const rows = db.subscribers
     .filter((s) => userCanAccessSubscriber(req.user, s.id))
@@ -226,7 +271,7 @@ app.get("/api/subscribers", authRequired, (req, res) => {
 });
 
 app.post("/api/subscribers", authRequired, allowRoles("manager", "writer"), (req, res) => {
-  const { area_id, subscriber_number, owner_name, phone, billing_plan, previousOwners = [] } = req.body || {};
+  const { area_id, subscriber_number, owner_name, phone, billing_plan, subscriber_type, previousOwners = [] } = req.body || {};
   if (!db.settings.meter_plans.some((p) => p.code === billing_plan)) {
     return res.status(400).json({ error: "نظام الجباية غير صالح" });
   }
@@ -237,7 +282,8 @@ app.post("/api/subscribers", authRequired, allowRoles("manager", "writer"), (req
     owner_name,
     status: "فعال",
     phone: phone || null,
-    billing_plan
+    billing_plan,
+    subscriber_type: cellStr(subscriber_type) || "منزلي"
   };
   db.subscribers.push(sub);
   // creator gets access automatically
@@ -259,6 +305,98 @@ app.post("/api/subscribers/:id/assign", authRequired, allowRoles("manager"), (re
     saveDB();
   }
   res.json({ ok: true });
+});
+
+app.get("/api/subscribers/:id/details", authRequired, (req, res) => {
+  const subscriberId = Number(req.params.id);
+  if (!userCanAccessSubscriber(req.user, subscriberId)) return res.status(403).json({ error: "غير مسموح" });
+  const sub = db.subscribers.find((s) => s.id === subscriberId);
+  if (!sub) return res.status(404).json({ error: "المشترك غير موجود" });
+  const previousOwners = db.previousOwners.filter((p) => p.subscriber_id === subscriberId);
+  res.json({ subscriber: sub, previousOwners });
+});
+
+app.put("/api/subscribers/:id", authRequired, allowRoles("manager", "writer"), (req, res) => {
+  const subscriberId = Number(req.params.id);
+  if (!userCanAccessSubscriber(req.user, subscriberId) && req.user.role !== "manager") {
+    return res.status(403).json({ error: "غير مسموح" });
+  }
+  const sub = db.subscribers.find((s) => s.id === subscriberId);
+  if (!sub) return res.status(404).json({ error: "المشترك غير موجود" });
+  const { area_id, subscriber_number, owner_name, phone, billing_plan, subscriber_type } = req.body || {};
+  if (!db.settings.meter_plans.some((p) => p.code === billing_plan)) {
+    return res.status(400).json({ error: "نظام الجباية غير صالح" });
+  }
+  const duplicate = db.subscribers.find(
+    (s) => s.id !== subscriberId && String(s.subscriber_number) === String(subscriber_number)
+  );
+  if (duplicate) return res.status(400).json({ error: "رقم المشترك مستخدم مسبقاً" });
+  sub.area_id = Number(area_id);
+  sub.subscriber_number = String(subscriber_number).trim();
+  sub.owner_name = String(owner_name).trim();
+  sub.phone = phone ? String(phone).trim() : null;
+  sub.billing_plan = billing_plan;
+  sub.subscriber_type = cellStr(subscriber_type) || "منزلي";
+  saveDB();
+  res.json({ ok: true, subscriber: sub });
+});
+
+app.post("/api/subscribers/:id/previous-owners", authRequired, allowRoles("manager", "writer"), (req, res) => {
+  const subscriberId = Number(req.params.id);
+  if (!userCanAccessSubscriber(req.user, subscriberId) && req.user.role !== "manager") {
+    return res.status(403).json({ error: "غير مسموح" });
+  }
+  const { owner_name } = req.body || {};
+  if (!owner_name || !String(owner_name).trim()) {
+    return res.status(400).json({ error: "اسم المالك السابق مطلوب" });
+  }
+  const row = {
+    id: nextId("previousOwner"),
+    subscriber_id: subscriberId,
+    owner_name: String(owner_name).trim()
+  };
+  db.previousOwners.push(row);
+  saveDB();
+  res.json({ ok: true, previous_owner: row });
+});
+
+app.post("/api/assignments/bulk", authRequired, allowRoles("manager"), (req, res) => {
+  const { user_id, user_ids = [], assignment_type, area_ids = [], subscriber_ids = [] } = req.body || {};
+  const userIds = [...new Set([...(Array.isArray(user_ids) ? user_ids : []), user_id].map((x) => Number(x)).filter(Boolean))];
+  if (!userIds.length || !["writer", "collector"].includes(assignment_type)) {
+    return res.status(400).json({ error: "بيانات الإسناد غير صحيحة" });
+  }
+  const targetUsers = db.users.filter((u) => userIds.includes(u.id) && u.role === assignment_type);
+  if (targetUsers.length !== userIds.length) {
+    return res.status(400).json({ error: "يوجد مستخدم غير موجود أو دوره غير مطابق" });
+  }
+
+  const pickedAreaIds = area_ids.map((x) => Number(x)).filter((x) => Number.isFinite(x));
+  const pickedSubscriberIds = subscriber_ids.map((x) => Number(x)).filter((x) => Number.isFinite(x));
+  const byAreas = db.subscribers.filter((s) => pickedAreaIds.includes(Number(s.area_id))).map((s) => s.id);
+  const allIds = [...new Set([...pickedSubscriberIds, ...byAreas])];
+
+  if (!allIds.length) return res.status(400).json({ error: "اختر مناطق أو مشتركين للإسناد" });
+
+  let added = 0;
+  for (const targetUser of targetUsers) {
+    for (const subscriberId of allIds) {
+      const exists = db.assignments.some(
+        (a) => a.subscriber_id === subscriberId && a.user_id === targetUser.id && a.assignment_type === assignment_type
+      );
+      if (!exists) {
+        db.assignments.push({
+          id: nextId("assignment"),
+          subscriber_id: subscriberId,
+          user_id: targetUser.id,
+          assignment_type
+        });
+        added += 1;
+      }
+    }
+  }
+  saveDB();
+  res.json({ ok: true, added, total_selected: allIds.length, users_count: targetUsers.length });
 });
 
 app.get("/api/subscribers/:id/records/:year", authRequired, (req, res) => {
@@ -293,6 +431,7 @@ app.post("/api/subscribers/:id/records/:year/init", authRequired, allowRoles("ma
         water: waterPrice,
         cleaning: db.settings.cleaning_fee,
         interest: 0,
+        other: db.settings.other_fee,
         subtotal: 0,
         debt: 0,
         total_due: 0,
@@ -322,9 +461,45 @@ function cellStr(v) {
   return String(v).trim();
 }
 
+function normalizeArabicDigits(s) {
+  return cellStr(s)
+    .replace(/[٠-٩]/g, (d) => String("٠١٢٣٤٥٦٧٨٩".indexOf(d)))
+    .replace(/[۰-۹]/g, (d) => String("۰۱۲۳۴۵۶۷۸۹".indexOf(d)));
+}
+
+function normalizeLoose(s) {
+  return normalizeArabicDigits(s).toLowerCase().replace(/\s+/g, "").replace(/[\/\\|_-]/g, "");
+}
+
+function resolveBillingPlan(rawValue, fallbackCode) {
+  const text = cellStr(rawValue);
+  if (!text) return fallbackCode;
+  const exactCode = db.settings.meter_plans.find((p) => p.code === text);
+  if (exactCode) return exactCode.code;
+  const exactLabel = db.settings.meter_plans.find((p) => p.label === text);
+  if (exactLabel) return exactLabel.code;
+
+  const loose = normalizeLoose(text);
+  const byLooseCodeOrLabel = db.settings.meter_plans.find((p) => {
+    return normalizeLoose(p.code) === loose || normalizeLoose(p.label) === loose;
+  });
+  if (byLooseCodeOrLabel) return byLooseCodeOrLabel.code;
+
+  const byContains = db.settings.meter_plans.find((p) => {
+    const lc = normalizeLoose(p.code);
+    const ll = normalizeLoose(p.label);
+    return loose.includes(lc) || loose.includes(ll) || lc.includes(loose) || ll.includes(loose);
+  });
+  if (byContains) return byContains.code;
+
+  return fallbackCode;
+}
+
 function classifyHeaderCell(h) {
   const s = cellStr(h).toLowerCase();
   if (!s) return null;
+  if (/(نوع.*(مشترك|اشتراك)|تصنيف|فئة|category|type)/i.test(s)) return "subscriber_type";
+  if (/(مقياس|جباية|عداد|نظام|plan|meter|tariff)/i.test(s)) return "billing_plan";
   if (/(هاتف|جوال|phone|mobile|tel)/i.test(s)) return "phone";
   if (/(رقم|number|no\b|subscriber|مشترك|اشتراك)/i.test(s) && !/هاتف|phone/.test(s)) return "subscriber_number";
   if (/(اسم|name|مالك|owner)/i.test(s)) return "owner_name";
@@ -333,7 +508,7 @@ function classifyHeaderCell(h) {
 }
 
 function mapHeaderRow(headerCells) {
-  const map = { subscriber_number: -1, owner_name: -1, area: -1, phone: -1 };
+  const map = { subscriber_number: -1, owner_name: -1, area: -1, phone: -1, subscriber_type: -1, billing_plan: -1 };
   headerCells.forEach((cell, idx) => {
     const k = classifyHeaderCell(cell);
     if (k && map[k] === -1) map[k] = idx;
@@ -352,7 +527,7 @@ function findOrCreateAreaByName(areaName, createMissing) {
   return a;
 }
 
-function createSubscriberRow(req, { area_id, subscriber_number, owner_name, phone, billing_plan, previousOwners }) {
+function createSubscriberRow(req, { area_id, subscriber_number, owner_name, phone, billing_plan, subscriber_type, previousOwners }) {
   if (!db.settings.meter_plans.some((p) => p.code === billing_plan)) {
     return { ok: false, error: "نظام الجباية غير صالح" };
   }
@@ -370,7 +545,8 @@ function createSubscriberRow(req, { area_id, subscriber_number, owner_name, phon
     owner_name: owner,
     status: "فعال",
     phone: phone ? cellStr(phone) : null,
-    billing_plan
+    billing_plan,
+    subscriber_type: cellStr(subscriber_type) || "منزلي"
   };
   db.subscribers.push(sub);
   db.assignments.push({
@@ -416,7 +592,7 @@ app.post(
     const firstRow = matrix[0].map(cellStr);
     const looksLikeHeader = firstRow.some((c) => classifyHeaderCell(c));
     let startRow = 0;
-    let colMap = { subscriber_number: -1, owner_name: -1, area: -1, phone: -1 };
+    let colMap = { subscriber_number: -1, owner_name: -1, area: -1, phone: -1, subscriber_type: -1, billing_plan: -1 };
 
     if (looksLikeHeader) {
       colMap = mapHeaderRow(firstRow);
@@ -428,7 +604,7 @@ app.post(
         });
       }
     } else {
-      colMap = { subscriber_number: 0, owner_name: 1, area: 2, phone: 3 };
+      colMap = { subscriber_number: 0, owner_name: 1, area: 2, phone: 3, subscriber_type: -1, billing_plan: -1 };
     }
 
     const created = [];
@@ -447,6 +623,9 @@ app.post(
       const owner_name = get("owner_name");
       const areaText = get("area");
       const phone = colMap.phone >= 0 ? get("phone") : "";
+      const subscriber_type = colMap.subscriber_type >= 0 ? get("subscriber_type") : "منزلي";
+      const rowBillingPlanText = colMap.billing_plan >= 0 ? get("billing_plan") : "";
+      const rowBillingPlan = resolveBillingPlan(rowBillingPlanText, billing_plan);
 
       if (!subscriber_number && !owner_name && !areaText) continue;
 
@@ -461,7 +640,8 @@ app.post(
         subscriber_number,
         owner_name,
         phone: phone || null,
-        billing_plan,
+        billing_plan: rowBillingPlan,
+        subscriber_type,
         previousOwners: []
       });
 
